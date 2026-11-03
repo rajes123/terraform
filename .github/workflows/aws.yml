@@ -7,7 +7,6 @@ on:
 permissions:
   id-token: write
   contents: read
-
 jobs:
   aws-oidc-test:
     runs-on: ubuntu-latest
