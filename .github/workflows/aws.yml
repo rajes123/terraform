@@ -155,6 +155,7 @@ jobs:
           aws ecs wait services-stable \
             --cluster ${ECS_CLUSTER} \
             --services ${{ matrix.service }}-service
+            
 
       - name: Deployment Complete
         if: github.event_name == 'push'
