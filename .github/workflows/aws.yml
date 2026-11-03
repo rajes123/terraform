@@ -1,28 +1,41 @@
-name: Test AWS OIDC Connection
+name: AWS OIDC Connection Test
+
 on:
   push:
     branches:
-      - master
+      - master  
 
+# The permissions block is REQUIRED. 
+# Without it, GitHub will not generate the OIDC token needed by AWS.
 permissions:
-  id-token: write
-  contents: read
+  id-token: write   # Required to request the JWT token from GitHub's OIDC provider
+  contents: read    # Required to check out your repository code
+
 jobs:
-  aws-oidc-test:
+  connect-aws:
+    name: Authenticate to AWS
     runs-on: ubuntu-latest
+
     steps:
+      # Step 1: Check out the repository code
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials
+      # Step 2: Exchange GitHub OIDC Token for AWS temporary credentials
+      - name: Configure AWS Credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
+          # Replace this secret with your actual IAM Role ARN (e.g., arn:aws:iam::123456789012:role/my-github-oidc-role)
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          
+          # Specify the AWS region your resources are in
           aws-region: ap-south-1
-
-      - name: Verify AWS Identity
+          
+      # Step 3: Run a test command to verify the connection works
+      - name: Verify AWS Connection
         run: |
           aws sts get-caller-identity
+
 
 
 
