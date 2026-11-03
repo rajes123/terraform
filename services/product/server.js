@@ -15,5 +15,5 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-    console.log(`Product service is running on port ${PORT}`);
+    console.log(`Product service is running on port ${PORT} 1`);
 });
