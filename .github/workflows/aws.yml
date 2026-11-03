@@ -1,6 +1,4 @@
-
 name: Test AWS OIDC Connection
-
 on:
   push:
     branches:
@@ -12,9 +10,7 @@ permissions:
 
 jobs:
   aws-oidc-test:
-
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
