@@ -1,0 +1,162 @@
+
+name: Build and Deploy Microservices to AWS ECS
+
+on:
+  push:
+    branches:
+      - master
+
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-south-1
+  ECS_CLUSTER: microservices-cluster
+
+jobs:
+
+  build-and-deploy:
+
+    name: Build and Deploy ${{ matrix.service }}
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - user
+          - admin
+          - mobile
+          - payment
+          - product
+
+    # Only deploy after code is pushed to master.
+    # Pull requests will run Docker build validation only.
+    steps:
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Build Docker Image
+        if: github.event_name == 'pull_request'
+        run: |
+          docker build \
+            -t ${{ matrix.service }}:test \
+            ./services/${{ matrix.service }}
+
+      - name: Configure AWS Credentials
+        if: github.event_name == 'push'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get AWS Account ID
+        if: github.event_name == 'push'
+        id: aws
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity \
+            --query Account --output text)
+
+          echo "account_id=$ACCOUNT_ID" >> $GITHUB_OUTPUT
+
+      - name: Login to Amazon ECR
+        if: github.event_name == 'push'
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build Docker Image
+        if: github.event_name == 'push'
+        run: |
+          docker build \
+            -t ${{ matrix.service }}:${GITHUB_SHA} \
+            ./services/${{ matrix.service }}
+
+      - name: Tag Docker Image
+        if: github.event_name == 'push'
+        run: |
+          IMAGE_URI="${{ steps.aws.outputs.account_id }}.dkr.ecr.${AWS_REGION}.amazonaws.com/${{ matrix.service }}"
+
+          docker tag \
+            ${{ matrix.service }}:${GITHUB_SHA} \
+            ${IMAGE_URI}:${GITHUB_SHA}
+
+          docker tag \
+            ${{ matrix.service }}:${GITHUB_SHA} \
+            ${IMAGE_URI}:latest
+
+          echo "IMAGE_URI=${IMAGE_URI}" >> $GITHUB_ENV
+
+      - name: Push Docker Image to ECR
+        if: github.event_name == 'push'
+        run: |
+          docker push ${IMAGE_URI}:${GITHUB_SHA}
+          docker push ${IMAGE_URI}:latest
+
+      - name: Get Current ECS Task Definition
+        if: github.event_name == 'push'
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${{ matrix.service }} \
+            --query taskDefinition \
+            --output json > task-definition.json
+
+      - name: Update Task Definition Image
+        if: github.event_name == 'push'
+        run: |
+          jq \
+            --arg SERVICE "${{ matrix.service }}" \
+            --arg IMAGE "${IMAGE_URI}:${GITHUB_SHA}" \
+            'del(
+              .taskDefinitionArn,
+              .revision,
+              .status,
+              .requiresAttributes,
+              .compatibilities,
+              .registeredAt,
+              .registeredBy
+            )
+            | .containerDefinitions |= map(
+                if .name == $SERVICE
+                then .image = $IMAGE
+                else .
+                end
+              )' \
+            task-definition.json > new-task-definition.json
+
+      - name: Register New ECS Task Definition
+        if: github.event_name == 'push'
+        id: task
+        run: |
+          TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://new-task-definition.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+
+          echo "task_def_arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
+
+      - name: Deploy to ECS Service
+        if: github.event_name == 'push'
+        run: |
+          aws ecs update-service \
+            --cluster ${ECS_CLUSTER} \
+            --service ${{ matrix.service }}-service \
+            --task-definition ${{ steps.task.outputs.task_def_arn }} \
+            --desired-count 1
+
+      - name: Wait for ECS Deployment
+        if: github.event_name == 'push'
+        run: |
+          aws ecs wait services-stable \
+            --cluster ${ECS_CLUSTER} \
+            --services ${{ matrix.service }}-service
+
+      - name: Deployment Complete
+        if: github.event_name == 'push'
+        run: |
+          echo "${{ matrix.service }} deployed successfully"
